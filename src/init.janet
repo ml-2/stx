@@ -360,15 +360,17 @@
                     nil))})))
 
 (defn init []
-  (defn loader [path args]
-    (with [file (file/open path :rn)]
-      (run-context
-       {:source path
-        :parser (parser/new)
-        :on-status (fn [f res]
-                     (when (= (fiber/status f) :error)
-                       (propagate res f)))
-        :chunks (fn [buf p]
-                  (file/read file :line buf))})))
-  (put module/loaders :stx-syntax loader)
-  (array/push module/paths [":all:.stx.janet" :stx-syntax]))
+  (def key :stx-syntax)
+  (unless (get module/loaders key)
+    (defn loader [path args]
+      (with [file (file/open path :rn)]
+            (run-context
+             {:source path
+              :parser (parser/new)
+              :on-status (fn [f res]
+                           (when (= (fiber/status f) :error)
+                             (propagate res f)))
+              :chunks (fn [buf p]
+                        (file/read file :line buf))})))
+    (put module/loaders key loader)
+    (array/push module/paths [":all:.stx.janet" key])))
