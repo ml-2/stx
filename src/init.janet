@@ -409,18 +409,19 @@
   used to find the line number of the string contents, which is assumed to be
   one line below the start of the tuple at column 1. The file name defaults to current-file.
   ```
-  [code &opt file-name]
+  [code &opt opts]
   ~(do
      (def code ,code)
      (def sm (,tuple/sourcemap code))
      (var x false)
      (,parser/run
-       {:source (or ,file-name (dyn *current-file*))
-        :parser (,parser/new (,inc (,first sm)) 1)
-        :chunks (fn [buf p]
-                  (if (,not x)
-                    (do (set x true) (,buffer/push-string buf (,first code)))
-                    nil))})))
+       (,merge
+         {:parser (,parser/new (,inc (,first sm)) 1)
+          :chunks (fn [buf p]
+                    (if (,not x)
+                      (do (set x true) (,buffer/push-string buf (,first code)))
+                      nil))}
+         (or ,opts {})))))
 
 (defn init
   `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
@@ -432,6 +433,7 @@
             (parser/run
              {:source path
               :parser (parser/new)
+              :env (table/setproto @{} root-env)
               :chunks (fn [buf p] (file/read file :all buf))})))
     (put module/loaders key loader)
     (array/push module/paths [":all:.stx.janet" key])))
