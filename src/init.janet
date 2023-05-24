@@ -212,13 +212,17 @@
 
   (defn wrap-long [mut? &opt $pat]
     (def pat (or $pat pat))
-    (def buf (buffer/new-filled (+ (dec ((pat :source) :column))) (chr " ")))
+    (def src (pat :source))
+    (def buf (buffer/new-filled (+ (dec (src :column))) (chr " ")))
     (when mut?
       (buffer/push-byte buf (chr "@")))
     (buffer/push-string buf (pat :delim))
     (buffer/push-string buf (pat :value))
     (buffer/push-string buf (pat :delim))
-    (wrap-stringlike (parse buf) (+ (length (pat :delim)) (if mut? 1 0)) (pat :source)))
+    (if (= (first (pat :value)) (chr "\n"))
+      (wrap-stringlike (parse buf) 0 {:name (src :name) :line (inc (src :line))
+                                      :column 1 :position (inc (src :position))})
+      (wrap-stringlike (parse buf) (+ (length (pat :delim)) (if mut? 1 0)) src)))
 
   (defn wrap-map [fun values]
     (wrap (fun ;(map |(parser/pattern-to-object $ syntax) values))))
