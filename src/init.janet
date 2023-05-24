@@ -348,13 +348,37 @@
     (set (parser :state) [:eof nil])
     (:consume parser "")))
 
+(def- lc-pattern
+  (peg/compile ~(* (cmt (* (argument 0) (line))
+                        ,(fn [l0 l1] (+ (dec (or l0 1)) l1)))
+                   (cmt (* (argument 0) (line) (argument 1) (column))
+                        ,(fn [l0 l1 c0 c1] (if (= l0 l1) (+ (dec (or c0 1)) c1) c1))))))
+
+(defn parser/where [parser]
+  (tuple ;(peg/match
+           lc-pattern
+           (parser :buffer) (parser :position) (parser :start-line) (parser :start-column))))
+
+(defn parser/error [parser]
+  (when (= (parser/state-key parser) :error)
+    (def err ((parser :state) 1))
+    (match (err :type)
+      :peg (err :error)
+      :number
+       (do (def src ((err :value) :source))
+           (string/format "Invalid number %s in \"%s\" at line %d column %d"
+                          ((err :value) :value)
+                          (src :name) (src :line) (src :column)))
+      (string/format "Internal stx error: Unknown error type %v" (err :type)))))
+
 (def parser/prototype
   @{:consume parser/consume
-   :produce parser/produce
-   :status parser/status
-   :has-more parser/has-more
-   :eof parser/eof
-  })
+    :produce parser/produce
+    :status parser/status
+    :has-more parser/has-more
+    :where parser/where
+    :error parser/error
+    :eof parser/eof})
 
 (defn parser/new [&opt line column]
   (def state @{:buffer @"" :queue @[] :state [:ok nil] :position 0 :start-line line :start-column column})
@@ -391,6 +415,17 @@
             (run-context
              {:source path
               :parser (parser/new)
+              :on-parse-error (fn [parser where] (error (parser/error parser)))
+              :on-compile-error
+                (fn [msg macrof where &opt line col]
+                  (def buf @"")
+                  (with-dyns [*err* buf
+                              *err-color* false]
+                    (bad-compile msg macrof where line col))
+                  (if macrof
+                    (propagate buf macrof)
+                    (error buf)))
+              :fiber-flags :y
               :on-status (fn [f res]
                            (when (= (fiber/status f) :error)
                              (propagate res f)))
