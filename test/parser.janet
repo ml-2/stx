@@ -62,3 +62,17 @@
 (test (:produce parser) hello)
 (:eof parser)
 (test (:has-more parser) false)
+
+(def parser (stx/parser/new))
+(consume parser "@[] @[1] @[1 2 3] @[```\nhello\n``` world]")
+(test (:produce parser) @[])
+(test (:produce parser) @[1])
+(test (:produce parser) @[1 2 3])
+(test (:produce parser) @["hello" world])
+
+(def parser (stx/parser/new))
+(consume parser "@{} @{1 2} @{1 2 3 4} @{```\nhello\n``` world}")
+(test (:produce parser) @{})
+(test (:produce parser) @{1 2})
+(test (:produce parser) @{1 2 3 4})
+(test (:produce parser) @{"hello" world})
