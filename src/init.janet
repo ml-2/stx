@@ -395,7 +395,7 @@
                            (when (= (fiber/status f) :error)
                              (propagate res f)))
               :chunks (fn [buf p]
-                        (file/read file :line buf))})))
+                        (file/read file :all buf))})))
     (put module/loaders key loader)
     (array/push module/paths [":all:.stx.janet" key])))
 
