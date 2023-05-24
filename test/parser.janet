@@ -55,3 +55,10 @@
 (test (stx/value result) "\nHello, world!\n")
 (test (stx/line result) 2)
 (test (stx/column result) 7)
+(test (:has-more parser) false)
+
+(def parser (stx/parser/new))
+(consume parser "hello#world")
+(test (:produce parser) hello)
+(:eof parser)
+(test (:has-more parser) false)

@@ -41,7 +41,9 @@
 # nil means that the value is complete.
 (def parser/pattern
   (peg/compile
-   ~{:source (/ (group (* (argument 0 :name)
+   ~{# :source must always be at the very beginning of every object, because it
+     # is used to determine from where to try again when a value is partial.
+     :source (/ (group (* (argument 0 :name)
                           (cmt (* (argument 1) (line))
                                ,(fn [l0 l1] (+ (dec (or l0 1)) l1))
                                :line)
@@ -57,8 +59,10 @@
                              :space
                              (+ :reader-value
                                 (* -1 (constant {:partial? true}))
-                                :root-err)))
-                   ,(fn [@[s x val]] {:type (parser/readermac-type x) :value val :source s :partial? (val :partial?)}))
+                                :root-err)
+                             (position)))
+                   ,(fn [@[s x val e]]
+                      {:type (parser/readermac-type x) :value val :source s :partial? (val :partial?) :end e}))
      :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?=>@^_"))
      :token (some :symchars)
      :hex (range "09" "af" "AF")
@@ -80,9 +84,9 @@
                                   (* (at-most 5 :hex) -1)))
                         -1
                         (error (* (constant "Invalid escape" :message) :err))))
-     :partial? (+ (* -1 (constant :maybe)) (constant nil))
-     :symbol (/ (group (* :source ':token :partial?))
-                ,(fn [@[s x p]]
+     :maybe-partial (+ (* -1 (constant :maybe)) (constant nil))
+     :symbol (/ (group (* :source ':token :maybe-partial (position)))
+                ,(fn [@[s x p e]]
                    (def invalid-symbol?
                      (and (first x) (>= (first x) (chr "0")) (<= (first x) (chr "9"))))
                    (when (and (not p) invalid-symbol?)
@@ -90,39 +94,40 @@
                    (def type (match x
                                "true" :true "false" :false "nil" :nil
                                 :symbol))
-                   {:type type :value x :source s :partial? (if invalid-symbol? :number-error p)}))
-     :keyword (/ (group (* :source ":" '(any :symchars) :partial?))
-                 ,(fn [@[s x p]] {:type :keyword :value x :source s :partial? p}))
+                   {:type type :value x :source s :partial? (if invalid-symbol? :number-error p) :end e}))
+     :keyword (/ (group (* :source ":" '(any :symchars) :maybe-partial (position)))
+                 ,(fn [@[s x p e]] {:type :keyword :value x :source s :partial? p :end e}))
      :bytes (group (* :source `"`
                       (% (any (+ :escape '(if-not "\"" 1))))
                       (+ (* `"` (constant nil))
                          (* -1 (constant true)))))
-     :string (/ :bytes
-                ,(fn [@[s x p]] {:type :string :value x :source s :partial? p}))
-     :buffer (/ (* "@" :bytes)
-                ,(fn [@[s x p]] {:type :buffer :value x :source s :partial? p}))
+     :string (/ (* :bytes (position))
+                ,(fn [@[s x p] e] {:type :string :value x :source s :partial? p :end e}))
+     :buffer (/ (* "@" :bytes (position))
+                ,(fn [@[s x p] e] {:type :buffer :value x :source s :partial? p :end e}))
      :long-bytes {:delim (some "`")
                   :open (capture :delim :n)
                   :close (cmt (* (not (> -1 "`")) (-> :n) ':delim) ,=)
                   :main (* :open '(any (if-not :close 1))
                                   (+ (* (drop :close) (constant nil))
                                      (* -1 (constant true))))}
-     :long-string (/ (group (* :source :long-bytes))
-                     ,(fn [@[s d x p]] {:type :long-string :value x :delim d :source s :partial? p}))
-     :long-buffer (/ (group (* :source "@" :long-bytes))
-                     ,(fn [@[s d x p]] {:type :long-buffer :value x :delim d :source s :partial? p}))
-     :number (/ (group (* :source (cmt (<- :token) ,scan-number) :partial?))
-                ,(fn [@[s x p]] {:type :number :value x :source s :partial? p}))
+     :long-string (/ (group (* :source :long-bytes (position)))
+                     ,(fn [@[s d x p e]] {:type :long-string :value x :delim d :source s :partial? p :end e}))
+     :long-buffer (/ (group (* :source "@" :long-bytes (position)))
+                     ,(fn [@[s d x p e]] {:type :long-buffer :value x :delim d :source s :partial? p :end e}))
+     :number (/ (group (* :source (cmt (<- :token) ,scan-number) :maybe-partial (position)))
+                ,(fn [@[s x p e]] {:type :number :value x :source s :partial? p :end e}))
      :backslash (cmt (* :source "\\"
                         (+ (* -1 (constant {:partial? true}))
                            (* (look 0 "(") :ptuple)
-                           (* (look 0 "`") :long-string)))
-                     ,(fn [s x]
+                           (* (look 0 "`") :long-string))
+                        (position))
+                     ,(fn [s x e]
                         (def type (match (x :type)
                                     :ptuple :stx-ptuple :long-string :stx-long-string nil :stx-partial
                                      (errorf "Internal stx error caused in \"%s\" at line %d column %d"
                                              (s :name) (s :line) (s :column))))
-                        {:type type :value x :source s :partial? (x :partial?)}))
+                        {:type type :value x :source s :partial? (x :partial?) :end e}))
      :raw-value (+ :number :keyword
                    :string :buffer :long-string :long-buffer
                    :parray :barray :ptuple :btuple :struct :table :symbol :backslash)
@@ -134,25 +139,31 @@
                           "(" (group :root)
                           (+ (* ")" (constant nil))
                              (* :space -1 (constant true))
-                             (error (* (constant "Unmatched parenthesis" :message) :delim-err)))))
-                ,(fn [@[s x p]] {:type :ptuple :value x :source s :partial? p}))
+                             (error (* (constant "Unmatched parenthesis" :message) :delim-err)))
+                          (position)))
+                ,(fn [@[s x p e]] {:type :ptuple :value x :source s :partial? p :end e}))
      :btuple (/ (group (* :source
                           "[" (group :root)
                           (+ (* "]" (constant nil))
                              (* :space -1 (constant true))
-                             (error (* (constant "Unmatched square bracket" :message) :delim-err)))))
-                ,(fn [@[s x p]] {:type :btuple :value x :source s :partial? p}))
+                             (error (* (constant "Unmatched square bracket" :message) :delim-err)))
+                          (position)))
+                ,(fn [@[s x p e]] {:type :btuple :value x :source s :partial? p :end e}))
      :struct (/ (group (* :source
                           "{" (group :root2)
                           (+ (* "}" (constant nil))
                              (* :space (+ (* (drop :root) -1) -1) (constant true))
                              (* :space (drop :root) "}"
                                 (error (* (constant "Odd number of values in struct or table" :message) :delim-err)))
-                             (error (* (constant "Unmatched curly bracket" :message) :delim-err)))))
-                ,(fn [@[s x p]] {:type :struct :value x :source s :partial? p}))
-     :parray (/ (group (* :source (* "@" :ptuple))) ,(fn [@[s x]] {:type :parray :source s :value x}))
-     :barray (/ (group (* :source (* "@" :btuple))) ,(fn [@[s x]] {:type :barray :source s :value x}))
-     :table (/ (group (* :source (* "@" :struct))) ,(fn [@[s x]] {:type :table :source s :value x}))
+                             (error (* (constant "Unmatched curly bracket" :message) :delim-err)))
+                          (position)))
+                ,(fn [@[s x p e]] {:type :struct :value x :source s :partial? p :end e}))
+     :parray (/ (group (* :source "@" :ptuple (position)))
+                ,(fn [@[s x e]] {:type :parray :source s :value x :end e}))
+     :barray (/ (group (* :source "@" :btuple (position)))
+                ,(fn [@[s x e]] {:type :barray :source s :value x :end e}))
+     :table (/ (group (* :source "@" :struct (position)))
+               ,(fn [@[s x e]] {:type :table :source s :value x :end e}))
      :err (cmt (* :space (backref :message) :source)
                      ,(fn [m {:name n :line l :column c}] (string/format `%s in "%s" at line %d column %d` m n l c)))
      :delim-err (cmt (* :space (backref :message) (backref :name) (backref :line) (backref :column))
@@ -266,7 +277,7 @@
         (def eof? (= (parser/state-key parser) :eof))
         (defn push []
           (queue/push (parser :queue) elem)
-          (set (parser :position) (length (parser :buffer))))
+          (set (parser :position) (elem :end)))
         (defn do-err [e]
           (set (parser :state) [:error e]))
 
@@ -284,13 +295,14 @@
         num-read)))
 
 (defn parser/produce [parser &opt wrap?]
-  (def obj (queue/dequeue (parser :queue)))
-  (unless obj
-    (break nil))
-  (def result (parser/pattern-to-object obj))
-  (if-not wrap?
-    result
-    (tuple/setmap [result] ((obj :source) :line) ((obj :source) :column))))
+  (when (not= (parser/state-key parser) :error)
+    (def obj (queue/dequeue (parser :queue)))
+    (unless obj
+      (break nil))
+    (def result (parser/pattern-to-object obj))
+    (if-not wrap?
+      result
+      (tuple/setmap [result] ((obj :source) :line) ((obj :source) :column)))))
 
 (defn parser/status [parser]
   (def at-end? (= (parser :position) (length (parser :buffer))))
@@ -306,7 +318,8 @@
     :pending))
 
 (defn parser/has-more [parser]
-  (not (queue/empty? (parser :queue))))
+  (and (not= (parser/state-key parser) :error)
+       (not (queue/empty? (parser :queue)))))
 
 (defn parser/eof [parser]
   (when (not= (parser/state-key parser) :error)
