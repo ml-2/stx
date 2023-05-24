@@ -10,3 +10,8 @@
             "bad slot #1, expected 32 bit signed integer, got 2147483648")
 (test-error (stx/line (stx/new "t" 7 (inc math/int32-max) {}))
             "bad slot #2, expected 32 bit signed integer, got 2147483648")
+
+(test (stx/name (unmarshal (marshal (stx/new "j" 4 6 {})))) "j")
+(test (stx/line (unmarshal (marshal (stx/new "j" 4 6 {})))) 4)
+(test (stx/column (unmarshal (marshal (stx/new "j" 4 6 {})))) 6)
+(test (stx/value (unmarshal (marshal (stx/new "j" 4 6 {})))) {})

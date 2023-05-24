@@ -14,6 +14,24 @@ static int jnt_stx_syntax_gcmark(void *data, size_t len) {
   return 0;
 }
 
+static void jnt_stx_syntax_marshal(void *data, JanetMarshalContext *ctx) {
+  jnt_stx_syntax *stx = (jnt_stx_syntax *)data;
+  janet_marshal_abstract(ctx, data);
+  janet_marshal_janet(ctx, stx->name);
+  janet_marshal_int(ctx, stx->line);
+  janet_marshal_int(ctx, stx->column);
+  janet_marshal_janet(ctx, stx->value);
+}
+
+static void *jnt_stx_syntax_unmarshal(JanetMarshalContext *ctx) {
+  jnt_stx_syntax *stx = (jnt_stx_syntax *)janet_unmarshal_abstract(ctx, sizeof(jnt_stx_syntax));
+  stx->name = janet_unmarshal_janet(ctx);
+  stx->line = janet_unmarshal_int(ctx);
+  stx->column = janet_unmarshal_int(ctx);
+  stx->value = janet_unmarshal_janet(ctx);
+  return stx;
+}
+
 static void jnt_stx_syntax_tostring(void *data, JanetBuffer *buffer) {
   jnt_stx_syntax *stx = (jnt_stx_syntax *)data;
   janet_buffer_push_cstring(buffer, "\"");
@@ -32,8 +50,8 @@ static const JanetAbstractType jnt_stx_syntax_type = {
   .gcmark = jnt_stx_syntax_gcmark,
   .get = NULL,
   .put = NULL,
-  .marshal = NULL,
-  .unmarshal = NULL,
+  .marshal = jnt_stx_syntax_marshal,
+  .unmarshal = jnt_stx_syntax_unmarshal,
   .tostring = jnt_stx_syntax_tostring,
   .compare = NULL,
   .hash = NULL,
