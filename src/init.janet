@@ -384,6 +384,26 @@
   (def state @{:buffer @"" :queue @[] :state [:ok nil] :position 0 :start-line line :start-column column})
   (table/setproto state parser/prototype))
 
+(defn parser/run [opts]
+  (run-context
+   (merge
+    {:parser (parser/new)
+     :on-parse-error (fn [parser where] (error (parser/error parser)))
+     :on-compile-error
+       (fn [msg macrof where &opt line col]
+         (def buf @"")
+         (with-dyns [*err* buf
+                     *err-color* false]
+           (bad-compile msg macrof where line col))
+         (if macrof
+           (propagate buf macrof)
+           (error buf)))
+     :fiber-flags :y
+     :on-status (fn [f res]
+                  (unless (= (fiber/status f) :dead)
+                    (propagate res f)))}
+    opts)))
+
 (defmacro sourcemap/run
   ```Execute a string in a singleton tuple as code. The tuple's sourcemap is
   used to find the line number of the string contents, which is assumed to be
@@ -394,13 +414,9 @@
      (def code ,code)
      (def sm (,tuple/sourcemap code))
      (var x false)
-     (,run-context
+     (,parser/run
        {:source (or ,file-name (dyn *current-file*))
         :parser (,parser/new (,inc (,first sm)) 1)
-        :fiber-flags :y
-        :on-status (fn [f res]
-                     (unless (= (,fiber/status f) :dead)
-                       (,propagate res f)))
         :chunks (fn [buf p]
                   (if (,not x)
                     (do (set x true) (,buffer/push-string buf (,first code)))
@@ -413,25 +429,10 @@
   (unless (get module/loaders key)
     (defn loader [path args]
       (with [file (file/open path :rn)]
-            (run-context
+            (parser/run
              {:source path
               :parser (parser/new)
-              :on-parse-error (fn [parser where] (error (parser/error parser)))
-              :on-compile-error
-                (fn [msg macrof where &opt line col]
-                  (def buf @"")
-                  (with-dyns [*err* buf
-                              *err-color* false]
-                    (bad-compile msg macrof where line col))
-                  (if macrof
-                    (propagate buf macrof)
-                    (error buf)))
-              :fiber-flags :y
-              :on-status (fn [f res]
-                           (unless (= (fiber/status f) :dead)
-                             (propagate res f)))
-              :chunks (fn [buf p]
-                        (file/read file :all buf))})))
+              :chunks (fn [buf p] (file/read file :all buf))})))
     (put module/loaders key loader)
     (array/push module/paths [":all:.stx.janet" key])))
 
