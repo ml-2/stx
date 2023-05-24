@@ -44,6 +44,31 @@ static void jnt_stx_syntax_tostring(void *data, JanetBuffer *buffer) {
   janet_formatb(buffer, "%v", stx->value);
 }
 
+#define JNT_STX_CMP(x, y) (x > y) ? -1 : (x < y)
+static int jnt_stx_syntax_compare(void *stx0, void *stx1) {
+  jnt_stx_syntax *left = (jnt_stx_syntax *) stx0;
+  jnt_stx_syntax *right = (jnt_stx_syntax *) stx1;
+  int result;
+  result = janet_compare(left->name, right->name);
+  if (result != 0)
+    return result;
+  result = JNT_STX_CMP(left->line, right->line);
+  if (result != 0)
+    return result;
+  result = JNT_STX_CMP(left->column, right->column);
+  if (result != 0)
+    return result;
+  return janet_compare(left->value, right->value);
+}
+
+static int32_t jnt_stx_syntax_hash(void *v_stx, size_t size) {
+  jnt_stx_syntax *stx = (jnt_stx_syntax *) v_stx;
+  return janet_hash(stx->name)
+    ^ janet_hash(janet_wrap_integer(stx->line))
+    ^ janet_hash(janet_wrap_integer(stx->column))
+    ^ janet_hash(stx->value);
+}
+
 static const JanetAbstractType jnt_stx_syntax_type = {
   .name = "stx",
   .gc = NULL,
@@ -53,8 +78,8 @@ static const JanetAbstractType jnt_stx_syntax_type = {
   .marshal = jnt_stx_syntax_marshal,
   .unmarshal = jnt_stx_syntax_unmarshal,
   .tostring = jnt_stx_syntax_tostring,
-  .compare = NULL,
-  .hash = NULL,
+  .compare = jnt_stx_syntax_compare,
+  .hash = jnt_stx_syntax_hash,
   .next = NULL,
   .call = NULL,
   .length = NULL,

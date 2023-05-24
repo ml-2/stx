@@ -2,6 +2,24 @@
 
 (defn stx? [x] (= (type x) :stx))
 
+(defn unwrap [obj]
+  (if (stx? obj)
+    (value obj)
+    obj))
+
+(defn sourcemap [syntax]
+  [(line syntax) (column syntax)])
+
+(defn keep [syntax new-val]
+  (cond (stx? new-val)
+        new-val
+        (stx? syntax)
+        (new (name syntax) (line syntax) (column syntax) (unwrap new-val))
+        new-val))
+
+(defn as-struct [syntax]
+  {:name (name syntax) :line (line syntax) :column (column syntax) :value (value syntax)})
+
 (defn- parser/unicode-hex [source hex]
   (def num (scan-number hex 16))
   (when (> num 0x10FFFF)
@@ -359,7 +377,9 @@
                     (do (set x true) (,buffer/push-string buf (,first code)))
                     nil))})))
 
-(defn init []
+(defn init
+  `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
+  []
   (def key :stx-syntax)
   (unless (get module/loaders key)
     (defn loader [path args]
@@ -374,3 +394,16 @@
                         (file/read file :line buf))})))
     (put module/loaders key loader)
     (array/push module/paths [":all:.stx.janet" key])))
+
+# Shadowing
+
+(defn or
+  `Returns a copy of the first argument which is a syntax object, with its
+  contained value set to nil. Returns nil if no syntax objects were given.`
+  [& syntax]
+  (var result nil)
+  (each elem syntax
+    (when (stx? elem)
+      (set result (new (name elem) (line elem) (column elem) nil))
+      (break)))
+  result)

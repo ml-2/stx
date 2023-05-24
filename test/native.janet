@@ -15,3 +15,34 @@
 (test (stx/line (unmarshal (marshal (stx/new "j" 4 6 {})))) 4)
 (test (stx/column (unmarshal (marshal (stx/new "j" 4 6 {})))) 6)
 (test (stx/value (unmarshal (marshal (stx/new "j" 4 6 {})))) {})
+
+(test (stx/unwrap (stx/new "j" 4 6 {})) {})
+(test (stx/unwrap {}) {})
+
+(test (stx/sourcemap (stx/new "j" 4 6 {})) [4 6])
+
+(def kept (stx/keep (stx/new "j" 4 6 {}) "hello"))
+(test (stx/name kept) "j")
+(test (stx/line kept) 4)
+(test (stx/column kept) 6)
+(test (stx/value kept) "hello")
+
+(test (stx/or) nil)
+(test (stx/or "A") nil)
+(test (stx/or "A" "B") nil)
+(test (stx/as-struct (stx/or (stx/new "a" 1 2 "A"))) {:column 2 :line 1 :name "a"})
+(test (stx/as-struct (stx/or (stx/new "a" 1 2 "A") "B")) {:column 2 :line 1 :name "a"})
+(test (stx/as-struct (stx/or (stx/new "a" 1 2 "A") (stx/new "b" 3 4 "B"))) {:column 2 :line 1 :name "a"})
+(test (stx/as-struct (stx/or "A" (stx/new "b" 3 4 "B"))) {:column 4 :line 3 :name "b"})
+
+(test (= (stx/new "a" 1 2 "A") (stx/new "a" 1 2 "A")) true)
+(test (= (stx/new "a" 1 2 "A") (stx/new "a" 1 2 "B")) false)
+(test (not= (stx/new "a" 1 2 "A") (stx/new "a" 1 3 "A")) true)
+(test (not= (stx/new "a" 1 2 "A") (stx/new "a" 3 2 "A")) true)
+(test (not= (stx/new "a" 1 2 "A") (stx/new "C" 1 2 "A")) true)
+
+(test (= (hash (stx/new "a" 1 2 "A")) (hash (stx/new "a" 1 2 "A"))) true)
+(test (= (hash (stx/new "a" 1 2 "A")) (hash (stx/new "a" 1 2 "B"))) false)
+(test (= (hash (stx/new "a" 1 2 "A")) (hash (stx/new "a" 1 3 "A"))) false)
+(test (= (hash (stx/new "a" 1 2 "A")) (hash (stx/new "a" 4 2 "A"))) false)
+(test (= (hash (stx/new "a" 1 2 "A")) (hash (stx/new "X" 1 2 "A"))) false)
