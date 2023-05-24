@@ -1,0 +1,12 @@
+(use judge)
+(import stx)
+
+(test (stx/name (stx/new "t" 1 1 {})) "t")
+(test (stx/line (stx/new "t" 3 7 {})) 3)
+(test (stx/column (stx/new "t" 3 7 {})) 7)
+(test (stx/value (stx/new "t" 3 7 {})) {})
+(test (stx/line (stx/new "t" math/int32-max 7 {})) 2147483647)
+(test-error (stx/line (stx/new "t" (inc math/int32-max) 7 {}))
+            "bad slot #1, expected 32 bit signed integer, got 2147483648")
+(test-error (stx/line (stx/new "t" 7 (inc math/int32-max) {}))
+            "bad slot #2, expected 32 bit signed integer, got 2147483648")
