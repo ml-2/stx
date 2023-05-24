@@ -397,8 +397,9 @@
      (,run-context
        {:source (or ,file-name (dyn *current-file*))
         :parser (,parser/new (,inc (,first sm)) 1)
+        :fiber-flags :y
         :on-status (fn [f res]
-                     (when (= (,fiber/status f) :error)
+                     (unless (= (,fiber/status f) :dead)
                        (,propagate res f)))
         :chunks (fn [buf p]
                   (if (,not x)
@@ -427,7 +428,7 @@
                     (error buf)))
               :fiber-flags :y
               :on-status (fn [f res]
-                           (when (= (fiber/status f) :error)
+                           (unless (= (fiber/status f) :dead)
                              (propagate res f)))
               :chunks (fn [buf p]
                         (file/read file :all buf))})))
