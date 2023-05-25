@@ -65,17 +65,6 @@
                        (bor (band (brshift num 06) 0x3f) 0x80)
                        (bor (band (brshift num 00) 0x3f) 0x80))))
 
-(defn- parser/readermac-type [readermac]
-  (match readermac
-    "'" :quote
-     ";" :splice
-     "~" :quasiquote
-     "," :unquote
-     "|" :short-fn
-     `\'` :stx/quote
-     # else
-     (errorf "Internal stx error: Unknown reader macro %v" readermac)))
-
 (def parser/pattern
   (do
     (defn simple [typ]
@@ -108,8 +97,19 @@
       {:type type :value x :source s :partial? (x :partial?) :end e})
 
     (defn readermac [s x val e]
-      {:type (parser/readermac-type x) :value val :source s
-       :partial? (val :partial?) :end e})
+      (when (= x `\'`)
+        (break {:type :stx/quote :value val :source s
+                :partial? (val :partial?) :end e}))
+      (def sym (match x
+                 "'" "quote"
+                  ";" "splice"
+                  "~" "quasiquote"
+                  "," "unquote"
+                  "|" "short-fn"
+                  # else
+                  (errorf "Internal stx error: Unknown reader macro %v" readermac)))
+      {:type :ptuple :value @[((simple :symbol) s sym (val :partial?) e) val]
+       :source s :partial? (val :partial?) :end e})
 
     # :partial? can be true, :maybe, :number-error, or nil.
     # true means that the text can be parsed as the beginning of a valid value,
@@ -142,7 +142,7 @@
                        (error (* (constant "Unmatched closing square bracket" :message) :err)))
                     (* (look 0 "}")
                        (error (* (constant "Unmatched closing curly bracket" :message) :err)))
-                    (error (* (constant "Invalid value" :message) :err)))
+                    (error (* (constant "Invalid syntax" :message) :err)))
        :ws (set " \t\r\f\n\0\v")
        :comment (* "#" (thru (+ "\n" -1)))
        :space (any (+ :ws :comment))
@@ -276,9 +276,6 @@
     (wrap (tuple/setmap (if (stx? result) (value result) result)
                         ((pat :source) :line) ((pat :source) :column))))
 
-  (defn wrap-reader [name value]
-    (wrap-tuple tuple [name value]))
-
   (defn wrap-stx-ptuple []
     (def values ((pat :value) :value))
     (def result [(parser/pattern-to-object (first values) dpt)
@@ -303,11 +300,6 @@
     :parray (wrap-map array (pat :value))
     :barray (wrap-map array (pat :value))
     :table (wrap-map table (pat :value))
-    :quote (wrap-reader 'quote (pat :value))
-    :splice (wrap-reader 'splice (pat :value))
-    :quasiquote (wrap-reader 'quasiquote (pat :value))
-    :unquote (wrap-reader 'unquote (pat :value))
-    :short-fn (wrap-reader 'short-fn (pat :value))
     :stx/quote (parser/pattern-to-object (pat :value) (if dpt (inc dpt) 0))
     :stx-ptuple (wrap-stx-ptuple)
     :stx-long-string (wrap-stringlike ((pat :value) :value) (inc (length ((pat :value) :delim))))
@@ -325,6 +317,7 @@
   ((parser :state) 0))
 
 (defn parser/consume [parser bytes &opt index]
+  (defn do-err [e] (set (parser :state) [:error e]))
   (def num-read (- (length bytes) (or index 0)))
   (when (= (parser/state-key parser) :error)
     (break num-read))
@@ -344,8 +337,6 @@
         (defn push []
           (queue/push (parser :queue) elem)
           (set (parser :position) (elem :end)))
-        (defn do-err [e]
-          (set (parser :state) [:error e]))
 
         (match (elem :partial?)
           nil (push)
@@ -357,7 +348,7 @@
           (errorf "Internal stx error: Unknown partial type %v" (elem :partial?))))
       num-read)
     [:error err fiber]
-    (do (set (parser :state) [:error {:type :peg :error err :fiber fiber}])
+    (do (do-err {:type :peg :error err :fiber fiber})
         num-read)))
 
 (defn parser/produce [parser &opt wrap?]
@@ -408,6 +399,10 @@
     (def err ((parser :state) 1))
     (match (err :type)
       :peg (err :error)
+      :partial (do (def src ((err :value) :source))
+                   (string/format "Incomplete %s value in \"%s\" at line %d column %d"
+                                  ((err :value) :type)
+                                  (src :name) (src :line) (src :column)))
       :number
        (do (def src ((err :value) :source))
            (string/format "Invalid number %s in \"%s\" at line %d column %d"
@@ -448,34 +443,33 @@
                     (propagate res f)))}
     opts)))
 
-(defmacro sourcemap/run
+(defn sourcemap/run
   ```Execute a string in a singleton tuple as code. The tuple's sourcemap is
   used to find the line number of the string contents, which is assumed to be
   one line below the start of the tuple at column 1. The file name defaults to current-file.
   ```
   [code &opt opts]
-  ~(do
-     (def code ,code)
-     (def sm (,tuple/sourcemap code))
-     (var x false)
-     (,parser/run
-       (,merge
-         {:parser (,parser/new (,inc (,first sm)) 1)
-          :chunks (fn [buf p]
-                    (if (,not x)
-                      (do (set x true) (,buffer/push-string buf (,first code)))
-                      nil))}
-         (or ,opts {})))))
+  (def sm (tuple/sourcemap code))
+  (var x false)
+  (parser/run
+   (merge
+    {:parser (parser/new (inc (first sm)) 1)
+     :chunks (fn [buf p]
+               (if (not x)
+                 (do (set x true) (buffer/push-string buf (first code)))
+                 nil))}
+    (or opts {}))))
 
 (def stx-env (curenv))
 
 (defn module/loader [path args]
-  (with [file (file/open path :rn)]
-        (parser/run
-         {:source path
-          :parser (parser/new)
-          :env (table/setproto (merge-module @{} stx-env "stx/") root-env)
-          :chunks (fn [buf p] (file/read file :all buf))})))
+  (with-dyns [*current-file* path]
+    (with [file (file/open path :rn)]
+          (parser/run
+           {:source path
+            :parser (parser/new)
+            :env (table/setproto (merge-module @{} stx-env "stx/") root-env)
+            :chunks (fn [buf p] (file/read file :all buf))}))))
 
 (defn init
   `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
@@ -483,7 +477,7 @@
   (def key :stx-syntax)
   (unless (get module/loaders key)
     (put module/loaders key module/loader)
-    (array/push module/paths [":all:.stx.janet" key])))
+    (module/add-paths ".janet.stx" key)))
 
 # Shadowing
 

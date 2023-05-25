@@ -96,40 +96,62 @@
   [{:end 1
     :partial? true
     :source {:column 1 :line 1 :name :t :position 0}
-    :type :quote
-    :value {:partial? true}}])
+    :type :ptuple
+    :value @[{:end 1
+              :partial? true
+              :source {:column 1 :line 1 :name :t :position 0}
+              :type :symbol
+              :value "quote"}
+             {:partial? true}]}])
 
 (test (mtch "~x")
   [{:end 2
     :partial? :maybe
     :source {:column 1 :line 1 :name :t :position 0}
-    :type :quasiquote
-    :value {:end 2
-            :partial? :maybe
-            :source {:column 2 :line 1 :name :t :position 1}
-            :type :symbol
-            :value "x"}}])
+    :type :ptuple
+    :value @[{:end 2
+              :partial? :maybe
+              :source {:column 1 :line 1 :name :t :position 0}
+              :type :symbol
+              :value "quasiquote"}
+             {:end 2
+              :partial? :maybe
+              :source {:column 2 :line 1 :name :t :position 1}
+              :type :symbol
+              :value "x"}]}])
 
 (test (mtch "~x ")
   [{:end 2
     :source {:column 1 :line 1 :name :t :position 0}
-    :type :quasiquote
-    :value {:end 2
-            :source {:column 2 :line 1 :name :t :position 1}
-            :type :symbol
-            :value "x"}}])
+    :type :ptuple
+    :value @[{:end 2
+              :source {:column 1 :line 1 :name :t :position 0}
+              :type :symbol
+              :value "quasiquote"}
+             {:end 2
+              :source {:column 2 :line 1 :name :t :position 1}
+              :type :symbol
+              :value "x"}]}])
 
 (test (mtch "~,x ")
   [{:end 3
     :source {:column 1 :line 1 :name :t :position 0}
-    :type :quasiquote
-    :value {:end 3
-            :source {:column 2 :line 1 :name :t :position 1}
-            :type :unquote
-            :value {:end 3
-                    :source {:column 3 :line 1 :name :t :position 2}
-                    :type :symbol
-                    :value "x"}}}])
+    :type :ptuple
+    :value @[{:end 3
+              :source {:column 1 :line 1 :name :t :position 0}
+              :type :symbol
+              :value "quasiquote"}
+             {:end 3
+              :source {:column 2 :line 1 :name :t :position 1}
+              :type :ptuple
+              :value @[{:end 3
+                        :source {:column 2 :line 1 :name :t :position 1}
+                        :type :symbol
+                        :value "unquote"}
+                       {:end 3
+                        :source {:column 3 :line 1 :name :t :position 2}
+                        :type :symbol
+                        :value "x"}]}]}])
 
 # Tuples
 

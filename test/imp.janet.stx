@@ -1,0 +1,5 @@
+(def my-stx-new stx/new)
+(def syntactic \'(a-symbol))
+
+(assert (not (dyn 'hidden-symbol))
+        "The symbol in the importing environment is not accessible.")
