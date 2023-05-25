@@ -469,19 +469,20 @@
 
 (def stx-env (curenv))
 
+(defn module/loader [path args]
+  (with [file (file/open path :rn)]
+        (parser/run
+         {:source path
+          :parser (parser/new)
+          :env (table/setproto (merge-module @{} stx-env "stx/") root-env)
+          :chunks (fn [buf p] (file/read file :all buf))})))
+
 (defn init
   `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
   []
   (def key :stx-syntax)
   (unless (get module/loaders key)
-    (defn loader [path args]
-      (with [file (file/open path :rn)]
-            (parser/run
-             {:source path
-              :parser (parser/new)
-              :env (table/setproto (merge-module @{} stx-env "stx/") root-env)
-              :chunks (fn [buf p] (file/read file :all buf))})))
-    (put module/loaders key loader)
+    (put module/loaders key module/loader)
     (array/push module/paths [":all:.stx.janet" key])))
 
 # Shadowing
