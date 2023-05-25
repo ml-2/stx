@@ -76,149 +76,167 @@
      # else
      (errorf "Internal stx error: Unknown reader macro %v" readermac)))
 
-# :partial? can be true, :maybe, :number-error, or nil.
-# true means that the text can be parsed as the beginning of a valid value, but there would be an error if this was EOF.
-# :maybe means that the text can be parsed as a full value or as the beginning of a valid value. The value can be used as-is on EOF.
-# :number-error means that it is something that might become a number if more characters are added, but otherwise this is error.
-# nil means that the value is complete.
 (def parser/pattern
-  (peg/compile
-   ~{# :source must always be at the very beginning of every object, because it
-     # is used to determine from where to try again when a value is partial.
-     :source (cmt (* (argument 0 :name)
-                     (cmt (* (argument 1) (line))
-                          ,(fn [l0 l1] (+ (dec (or l0 1)) l1))
-                          :line)
-                     (cmt (* (argument 1) (line) (argument 2) (column))
-                          ,(fn [l0 l1 c0 c1] (if (= l0 l1) (+ (dec (or c0 1)) c1) c1))
-                          :column)
-                     (position :position))
-                  ,(fn [n l c i] {:name n :line l :column c :position i}))
-     :ws (set " \t\r\f\n\0\v")
-     :comment (* "#" (thru (+ "\n" -1)))
-     :space (any (+ :ws :comment))
-     :readermac (cmt (* :source '(+ (set `';~,|`) `\'`)
-                        :space
-                        (+ :reader-value
-                           (* -1 (constant {:partial? true}))
-                           :root-err)
+  (do
+    (defn simple [typ]
+      (fn [s x p e] {:type typ :value x :source s :partial? p :end e}))
+
+    (defn delim [typ]
+      (fn [s d x p e] {:type typ :delim d :value x :source s :partial? p :end e}))
+
+    (defn sym [s x p e]
+
+      (def invalid-symbol?
+        (and (first x) (>= (first x) (chr "0")) (<= (first x) (chr "9"))))
+
+      (when (and (not p) invalid-symbol?)
+        (errorf `Invalid number in "%s" at line %d column %d` (s :name) (s :line) (s :column)))
+
+      (def type (match x
+                  "true" :true "false" :false "nil" :nil
+                   :symbol))
+
+      {:type type :value x :source s
+       :partial? (if invalid-symbol? :number-error p)
+       :end e})
+
+    (defn backslash [s x e]
+      (def type (match (x :type)
+                  :ptuple :stx-ptuple :long-string :stx-long-string nil :stx-partial
+                   (errorf "Internal stx error caused in \"%s\" at line %d column %d"
+                           (s :name) (s :line) (s :column))))
+      {:type type :value x :source s :partial? (x :partial?) :end e})
+
+    (defn readermac [s x val e]
+      {:type (parser/readermac-type x) :value val :source s
+       :partial? (val :partial?) :end e})
+
+    # :partial? can be true, :maybe, :number-error, or nil.
+    # true means that the text can be parsed as the beginning of a valid value,
+    #   but there would be an error if this was EOF.
+    # :maybe means that the text can be parsed as a full value or as the
+    #   beginning of a valid value. The value can be used as-is on EOF.
+    # :number-error means that it is something that might become a number if
+    #   more characters are added, but otherwise this is error.
+    # nil means that the value is complete.
+    (peg/compile
+     ~{# :source must always be at the very beginning of every object, because it
+       # is used to determine from where to try again when a value is partial.
+       :source (cmt (* (argument 0 :name)
+                       (cmt (* (argument 1) (line))
+                            ,(fn [l0 l1] (+ (dec (or l0 1)) l1))
+                            :line)
+                       (cmt (* (argument 1) (line) (argument 2) (column))
+                            ,(fn [l0 l1 c0 c1] (if (= l0 l1) (+ (dec (or c0 1)) c1) c1))
+                            :column)
+                       (position :position))
+                    ,(fn source [n l c i] {:name n :line l :column c :position i}))
+       # Error helpers
+       :err (cmt (* :space (backref :message) :source)
+                 ,(fn [m {:name n :line l :column c}] (string/format `%s in "%s" at line %d column %d` m n l c)))
+       :delim-err (cmt (* :space (backref :message) (backref :name) (backref :line) (backref :column))
+                       ,(fn [m n l c] (string/format "%s in \"%s\" at line %d column %d" m n l c)))
+       :root-err (+ (* (look 0 ")")
+                       (error (* (constant "Unmatched closing parenthesis" :message) :err)))
+                    (* (look 0 "]")
+                       (error (* (constant "Unmatched closing square bracket" :message) :err)))
+                    (* (look 0 "}")
+                       (error (* (constant "Unmatched closing curly bracket" :message) :err)))
+                    (error (* (constant "Invalid value" :message) :err)))
+       :ws (set " \t\r\f\n\0\v")
+       :comment (* "#" (thru (+ "\n" -1)))
+       :space (any (+ :ws :comment))
+       :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?=>@^_"))
+       :token (some :symchars)
+       :hex (range "09" "af" "AF")
+       :escape (* "\\" (+ (* "n" (constant "\n"))
+                          (* "t" (constant "\t"))
+                          (* "r" (constant "\r"))
+                          (* "z" (constant "\z"))
+                          (* "f" (constant "\f"))
+                          (* "e" (constant "\e"))
+                          (* "v" (constant "\v"))
+                          (* "0" (constant "\0"))
+                          (* "\\" (constant "\\"))
+                          (* `"` (constant `"`))
+                          (* "x" (+ (/ '[2 :hex] ,|(string/from-bytes (scan-number $ 16)))
+                                    (* (? :hex) -1)))
+                          (* "u" (+ (cmt (* :source '[4 :hex]) ,parser/unicode-hex)
+                                    (* (at-most 3 :hex) -1)))
+                          (* "U" (+ (cmt (* :source '[6 :hex]) ,parser/unicode-hex)
+                                    (* (at-most 5 :hex) -1)))
+                          -1
+                          (error (* (constant "Invalid escape" :message) :err))))
+       :maybe-partial (+ (* -1 (constant :maybe)) (constant nil))
+       :symbol (cmt (* :source
+                       ':token
+                       :maybe-partial (position))
+                    ,sym)
+       :keyword (cmt (* :source
+                        ":" '(any :symchars)
+                        :maybe-partial (position))
+                     ,(simple :keyword))
+       :bytes (* :source `"`
+                 (% (any (+ :escape '(if-not "\"" 1))))
+                 (+ (* `"` (constant nil))
+                    (* -1 (constant true))))
+       :string (cmt (* :bytes (position)) ,(simple :string))
+       :buffer (cmt (* "@" :bytes (position)) ,(simple :buffer))
+       :long-bytes {:delim (some "`")
+                    :open (capture :delim :n)
+                    :close (cmt (* (not (> -1 "`")) (-> :n) ':delim) ,=)
+                    :main (* :open '(any (if-not :close 1))
+                             (+ (* (drop :close) (constant nil))
+                                (* -1 (constant true))))}
+       :long-string (cmt (* :source :long-bytes (position)) ,(delim :long-string))
+       :long-buffer (cmt (* :source "@" :long-bytes (position)) ,(delim :long-buffer))
+       :number (cmt (* :source
+                       (cmt (<- :token) ,scan-number)
+                       :maybe-partial (position))
+                    ,(simple :number))
+       :backslash (cmt (* :source "\\"
+                          (+ (* -1 (constant {:partial? true}))
+                             (* (look 0 "(") :ptuple)
+                             (* (look 0 "`") :long-string))
+                          (position))
+                       ,backslash)
+       :ptuple-inner (* "(" (group :root)
+                        (+ (* ")" (constant nil))
+                           (* :space -1 (constant true))
+                           (error (* (constant "Unmatched parenthesis" :message) :delim-err)))
                         (position))
-                     ,(fn [s x val e]
-                        {:type (parser/readermac-type x) :value val :source s
-                         :partial? (val :partial?) :end e}))
-     :symchars (+ (range "09" "AZ" "az" "\x80\xFF") (set "!$%&*+-./:<?=>@^_"))
-     :token (some :symchars)
-     :hex (range "09" "af" "AF")
-     :escape (* "\\" (+ (* "n" (constant "\n"))
-                        (* "t" (constant "\t"))
-                        (* "r" (constant "\r"))
-                        (* "z" (constant "\z"))
-                        (* "f" (constant "\f"))
-                        (* "e" (constant "\e"))
-                        (* "v" (constant "\v"))
-                        (* "0" (constant "\0"))
-                        (* "\\" (constant "\\"))
-                        (* `"` (constant `"`))
-                        (* "x" (+ (/ '[2 :hex] ,|(string/from-bytes (scan-number $ 16)))
-                                  (* (? :hex) -1)))
-                        (* "u" (+ (cmt (* :source '[4 :hex]) ,parser/unicode-hex)
-                                  (* (at-most 3 :hex) -1)))
-                        (* "U" (+ (cmt (* :source '[6 :hex]) ,parser/unicode-hex)
-                                  (* (at-most 5 :hex) -1)))
-                        -1
-                        (error (* (constant "Invalid escape" :message) :err))))
-     :maybe-partial (+ (* -1 (constant :maybe)) (constant nil))
-     :symbol (cmt (* :source ':token :maybe-partial (position))
-                  ,(fn [s x p e]
-                     (def invalid-symbol?
-                       (and (first x) (>= (first x) (chr "0")) (<= (first x) (chr "9"))))
-                     (when (and (not p) invalid-symbol?)
-                       (errorf `Invalid number in "%s" at line %d column %d` (s :name) (s :line) (s :column)))
-                     (def type (match x
-                                 "true" :true "false" :false "nil" :nil
-                                  :symbol))
-                     {:type type :value x :source s :partial? (if invalid-symbol? :number-error p) :end e}))
-     :keyword (cmt (* :source ":" '(any :symchars) :maybe-partial (position))
-                   ,(fn [s x p e] {:type :keyword :value x :source s :partial? p :end e}))
-     :bytes (* :source `"`
-               (% (any (+ :escape '(if-not "\"" 1))))
-               (+ (* `"` (constant nil))
-                  (* -1 (constant true))))
-     :string (cmt (* :bytes (position))
-                ,(fn [s x p e] {:type :string :value x :source s :partial? p :end e}))
-     :buffer (cmt (* "@" :bytes (position))
-                  ,(fn [s x p e] {:type :buffer :value x :source s :partial? p :end e}))
-     :long-bytes {:delim (some "`")
-                  :open (capture :delim :n)
-                  :close (cmt (* (not (> -1 "`")) (-> :n) ':delim) ,=)
-                  :main (* :open '(any (if-not :close 1))
-                                  (+ (* (drop :close) (constant nil))
-                                     (* -1 (constant true))))}
-     :long-string (cmt (* :source :long-bytes (position))
-                       ,(fn [s d x p e] {:type :long-string :value x :delim d :source s :partial? p :end e}))
-     :long-buffer (cmt (* :source "@" :long-bytes (position))
-                       ,(fn [s d x p e] {:type :long-buffer :value x :delim d :source s :partial? p :end e}))
-     :number (cmt (* :source (cmt (<- :token) ,scan-number) :maybe-partial (position))
-                  ,(fn [s x p e] {:type :number :value x :source s :partial? p :end e}))
-     :backslash (cmt (* :source "\\"
-                        (+ (* -1 (constant {:partial? true}))
-                           (* (look 0 "(") :ptuple)
-                           (* (look 0 "`") :long-string))
+       :ptuple (cmt (* :source :ptuple-inner) ,(simple :ptuple))
+       :btuple-inner (* "[" (group :root)
+                        (+ (* "]" (constant nil))
+                           (* :space -1 (constant true))
+                           (error (* (constant "Unmatched square bracket" :message) :delim-err)))
                         (position))
-                     ,(fn [s x e]
-                        (def type (match (x :type)
-                                    :ptuple :stx-ptuple :long-string :stx-long-string nil :stx-partial
-                                     (errorf "Internal stx error caused in \"%s\" at line %d column %d"
-                                             (s :name) (s :line) (s :column))))
-                        {:type type :value x :source s :partial? (x :partial?) :end e}))
-     :raw-value (+ :number :keyword
-                   :string :buffer :long-string :long-buffer
-                   :parray :barray :ptuple :btuple :struct :table :symbol :backslash)
-     :reader-value (+ :readermac :raw-value)
-     :value (* :space :reader-value :space)
-     :root (any :value)
-     :root2 (any (* :value :value))
-     :ptuple-inner (* "(" (group :root)
-                      (+ (* ")" (constant nil))
-                         (* :space -1 (constant true))
-                         (error (* (constant "Unmatched parenthesis" :message) :delim-err)))
-                      (position))
-     :ptuple (cmt (* :source :ptuple-inner)
-                  ,(fn [s x p e] {:type :ptuple :value x :source s :partial? p :end e}))
-     :btuple-inner (* "[" (group :root)
-                      (+ (* "]" (constant nil))
-                         (* :space -1 (constant true))
-                         (error (* (constant "Unmatched square bracket" :message) :delim-err)))
-                      (position))
-     :btuple (cmt (* :source :btuple-inner)
-                  ,(fn [s x p e] {:type :btuple :value x :source s :partial? p :end e}))
-     :struct-inner (* "{" (group :root2)
-                      (+ (* "}" (constant nil))
-                         (* :space (+ (* (drop :root) -1) -1) (constant true))
-                         (* :space (drop :root) "}"
-                            (error (* (constant "Odd number of values in struct or table" :message) :delim-err)))
-                         (error (* (constant "Unmatched curly bracket" :message) :delim-err)))
-                      (position))
-     :struct (cmt (* :source :struct-inner)
-                  ,(fn [s x p e] {:type :struct :value x :source s :partial? p :end e}))
-     :parray (cmt (* :source "@" :ptuple-inner)
-                  ,(fn [s x p e] {:type :parray :source s :value x :partial? p :end e}))
-     :barray (cmt (* :source "@" :btuple-inner)
-                  ,(fn [s x p e] {:type :barray :source s :value x :partial? p :end e}))
-     :table (cmt (* :source "@" :struct-inner)
-                 ,(fn [s x p e] {:type :table :source s :value x :partial? p :end e}))
-     :err (cmt (* :space (backref :message) :source)
-                     ,(fn [m {:name n :line l :column c}] (string/format `%s in "%s" at line %d column %d` m n l c)))
-     :delim-err (cmt (* :space (backref :message) (backref :name) (backref :line) (backref :column))
-                         ,(fn [m n l c] (string/format "%s in \"%s\" at line %d column %d" m n l c)))
-     :root-err (+ (* (look 0 ")")
-                     (error (* (constant "Unmatched closing parenthesis" :message) :err)))
-                  (* (look 0 "]")
-                     (error (* (constant "Unmatched closing square bracket" :message) :err)))
-                  (* (look 0 "}")
-                     (error (* (constant "Unmatched closing curly bracket" :message) :err)))
-                  (error (* (constant "Invalid value" :message) :err)))
-     :main (* :root (* :space (+ -1 :root-err)))}))
+       :btuple (cmt (* :source :btuple-inner) ,(simple :btuple))
+       :struct-inner (* "{" (group :root2)
+                        (+ (* "}" (constant nil))
+                           (* :space (+ (* (drop :value) -1) -1) (constant true))
+                           (* :space (drop :value) "}"
+                              (error (* (constant "Odd number of values in struct or table" :message) :delim-err)))
+                           (error (* (constant "Unmatched curly bracket" :message) :delim-err)))
+                        (position))
+       :struct (cmt (* :source :struct-inner) ,(simple :struct))
+       :parray (cmt (* :source "@" :ptuple-inner) ,(simple :parray))
+       :barray (cmt (* :source "@" :btuple-inner) ,(simple :barray))
+       :table (cmt (* :source "@" :struct-inner) ,(simple :table))
+       :readermac (cmt (* :source '(+ (set `';~,|`) `\'`)
+                          :space
+                          (+ :raw-value
+                             (* -1 (constant {:partial? true}))
+                             :root-err)
+                          (position))
+                       ,readermac)
+       :raw-value (+ :readermac :number :keyword
+                     :string :buffer :long-string :long-buffer
+                     :parray :barray :ptuple :btuple :struct :table :symbol :backslash)
+       :value (* :space :raw-value :space)
+       :root (any :value)
+       :root2 (any (* :value :value))
+       :main (* :root (* :space (+ -1 :root-err)))})))
 
 (defn parser/source-to-stx [source value dpt]
   (if (= (type value) :stx)
