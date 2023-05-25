@@ -1,4 +1,5 @@
 (use judge)
+(use ./util)
 (import stx)
 
 (defn consume
@@ -80,10 +81,37 @@
 (def parser (stx/parser/new))
 (consume parser `\'\(or 3 5)`)
 (def result (:produce parser))
-(test (stx/stx? result) true)
-(test (stx/stx? (first (stx/value result))) true)
-(test (stx/value (first (stx/value result))) or)
-(test (stx/stx? ((stx/value result) 1)) true)
-(test (stx/value ((stx/value result) 1)) 3)
+(test (as result)
+  {:column 3
+   :depth 0
+   :line 1
+   :name "test/parser.janet"
+   :value [{:column 5
+            :depth 0
+            :line 1
+            :name "test/parser.janet"
+            :value or}
+           {:column 8
+            :depth 1
+            :line 1
+            :name "test/parser.janet"
+            :value 3}
+           {:column 10
+            :depth 1
+            :line 1
+            :name "test/parser.janet"
+            :value 5}]})
 (test (tuple/sourcemap (stx/value result)) [1 3])
 (test (stx/sourcemap result) [1 3])
+(test (as (stx/unwrap* result))
+  [or
+   {:column 8
+    :depth 0
+    :line 1
+    :name "test/parser.janet"
+    :value 3}
+   {:column 10
+    :depth 0
+    :line 1
+    :name "test/parser.janet"
+    :value 5}])

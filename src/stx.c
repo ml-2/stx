@@ -2,9 +2,10 @@
 
 typedef struct jnt_stx_syntax {
   Janet name;
+  Janet value;
   int32_t line;
   int32_t column;
-  Janet value;
+  int32_t depth;
 } jnt_stx_syntax;
 
 static int jnt_stx_syntax_gcmark(void *data, size_t len) {
@@ -18,17 +19,19 @@ static void jnt_stx_syntax_marshal(void *data, JanetMarshalContext *ctx) {
   jnt_stx_syntax *stx = (jnt_stx_syntax *)data;
   janet_marshal_abstract(ctx, data);
   janet_marshal_janet(ctx, stx->name);
+  janet_marshal_janet(ctx, stx->value);
   janet_marshal_int(ctx, stx->line);
   janet_marshal_int(ctx, stx->column);
-  janet_marshal_janet(ctx, stx->value);
+  janet_marshal_int(ctx, stx->depth);
 }
 
 static void *jnt_stx_syntax_unmarshal(JanetMarshalContext *ctx) {
   jnt_stx_syntax *stx = (jnt_stx_syntax *)janet_unmarshal_abstract(ctx, sizeof(jnt_stx_syntax));
   stx->name = janet_unmarshal_janet(ctx);
+  stx->value = janet_unmarshal_janet(ctx);
   stx->line = janet_unmarshal_int(ctx);
   stx->column = janet_unmarshal_int(ctx);
-  stx->value = janet_unmarshal_janet(ctx);
+  stx->depth = janet_unmarshal_int(ctx);
   return stx;
 }
 
@@ -40,6 +43,10 @@ static void jnt_stx_syntax_tostring(void *data, JanetBuffer *buffer) {
   janet_to_string_b(buffer, janet_wrap_integer(stx->line));
   janet_buffer_push_cstring(buffer, " C");
   janet_to_string_b(buffer, janet_wrap_integer(stx->column));
+  if (stx->depth > 0) {
+    janet_buffer_push_cstring(buffer, " D");
+    janet_to_string_b(buffer, janet_wrap_integer(stx->depth));
+  }
   janet_buffer_push_cstring(buffer, " ");
   janet_formatb(buffer, "%v", stx->value);
 }
@@ -58,6 +65,9 @@ static int jnt_stx_syntax_compare(void *stx0, void *stx1) {
   result = JNT_STX_CMP(left->column, right->column);
   if (result != 0)
     return result;
+  result = JNT_STX_CMP(left->depth, right->depth);
+  if (result != 0)
+    return result;
   return janet_compare(left->value, right->value);
 }
 
@@ -66,6 +76,7 @@ static int32_t jnt_stx_syntax_hash(void *v_stx, size_t size) {
   return janet_hash(stx->name)
     ^ janet_hash(janet_wrap_integer(stx->line))
     ^ janet_hash(janet_wrap_integer(stx->column))
+    ^ janet_hash(janet_wrap_integer(stx->depth))
     ^ janet_hash(stx->value);
 }
 
@@ -86,19 +97,21 @@ static const JanetAbstractType jnt_stx_syntax_type = {
   .bytes = NULL,
 };
 
-static jnt_stx_syntax *jnt_stx_new_syntax(Janet name, int32_t line, int32_t column, Janet value) {
+static jnt_stx_syntax *jnt_stx_new_syntax(Janet name, int32_t line, int32_t column, Janet value, int32_t depth) {
   jnt_stx_syntax *stx = (jnt_stx_syntax *)janet_abstract(&jnt_stx_syntax_type, sizeof(jnt_stx_syntax));
   stx->name = name;
   stx->line = line;
   stx->column = column;
   stx->value = value;
+  stx->depth = depth;
   return stx;
 }
 
 static Janet jnt_stx_syntax_new(int32_t argc, Janet *argv) {
-  janet_fixarity(argc, 4);
+  janet_arity(argc, 4, 5);
   jnt_stx_syntax *stx = jnt_stx_new_syntax(
-      argv[0], janet_getinteger(argv, 1), janet_getinteger(argv, 2), argv[3]);
+      argv[0], janet_getinteger(argv, 1), janet_getinteger(argv, 2), argv[3],
+      argc == 5 ? janet_getinteger(argv, 4) : 0);
   return janet_wrap_abstract(stx);
 }
 
@@ -126,9 +139,15 @@ static Janet jnt_stx_syntax_value(int32_t argc, Janet *argv) {
   return stx->value;
 }
 
+static Janet jnt_stx_syntax_depth(int32_t argc, Janet *argv) {
+  janet_fixarity(argc, 1);
+  jnt_stx_syntax *stx = (jnt_stx_syntax *)janet_getabstract(argv, 0, &jnt_stx_syntax_type);
+  return janet_wrap_integer(stx->depth);
+}
+
 static const JanetReg cfuns[] = {
   { "new", jnt_stx_syntax_new,
-    "(stx/new name line column)\n"
+    "(stx/new name line column &opt depth)\n"
     "\n\n"
     "Creates a new syntax object."
   },
@@ -151,6 +170,11 @@ static const JanetReg cfuns[] = {
     "(stx/value stx)\n"
     "\n\n"
     "Returns the value contained in the syntax object."
+  },
+  { "depth", jnt_stx_syntax_depth,
+    "(stx/depth stx)\n"
+    "\n\n"
+    "Returns the depth of the syntax object."
   },
   { NULL, NULL, NULL }
 };

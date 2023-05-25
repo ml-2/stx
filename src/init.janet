@@ -2,10 +2,33 @@
 
 (defn stx? [x] (= (type x) :stx))
 
+(defn dec-depth [obj &opt new-value]
+  (if (= (depth obj) 0)
+    (or new-value (value obj))
+    (new (name obj) (line obj) (column obj) (or new-value (value obj))
+         (dec (depth obj)))))
+
 (defn unwrap [obj]
   (if (stx? obj)
-    (value obj)
+    (dec-depth obj)
     obj))
+
+(defn unwrap*
+  `Unwraps object recursively. Recurs on stx, tuple, array, table, and struct
+  values. Does not take prototypes into consideration.`
+  [obj]
+  (match (type obj)
+    :stx (dec-depth obj (unwrap* (value obj)))
+    :tuple (keep-syntax! obj (map unwrap* obj))
+    :array (map unwrap* obj)
+    :table (do (def result @{})
+               (eachk key obj (set (result (unwrap* key)) (unwrap* (obj key))))
+               result)
+    :struct
+     (do (def result @[])
+         (eachk key obj (array/push result (unwrap* key) (unwrap* (obj key))))
+         (struct ;result))
+     obj))
 
 (defn sourcemap [syntax]
   [(line syntax) (column syntax)])
@@ -18,7 +41,8 @@
         new-val))
 
 (defn as-struct [syntax]
-  {:name (name syntax) :line (line syntax) :column (column syntax) :value (value syntax)})
+  {:name (name syntax) :line (line syntax) :column (column syntax) :value (value syntax)
+   :depth (depth syntax)})
 
 (defn- parser/unicode-hex [source hex]
   (def num (scan-number hex 16))
@@ -195,16 +219,17 @@
                   (error (* (constant "Invalid value" :message) :err)))
      :main (* :root (* :space (+ -1 :root-err)))}))
 
-(defn parser/source-to-stx [source value]
+(defn parser/source-to-stx [source value dpt]
   (if (= (type value) :stx)
-    value
-    (new (source :name) (source :line) (source :column) value)))
+    (errorf "Internal stx error: Tried to wrap syntax in syntax in %s at line %d column %d"
+            (source :name) (source :line) (source :column))
+    (new (source :name) (source :line) (source :column) value dpt)))
 
-(defn parser/pattern-to-object [pat &opt syntax]
+(defn parser/pattern-to-object [pat &opt dpt]
   (defn wrap [val &opt source]
-    (if-not syntax
+    (if-not dpt
       val
-      (parser/source-to-stx (or source (pat :source)) val)))
+      (parser/source-to-stx (or source (pat :source)) val dpt)))
 
   (defn wrap-stringlike [value offset &opt source]
     (def source (or source (pat :source)))
@@ -225,7 +250,7 @@
       (wrap-stringlike (parse buf) (+ (length (pat :delim)) (if mut? 1 0)) src)))
 
   (defn wrap-map [fun values]
-    (wrap (fun ;(map |(parser/pattern-to-object $ syntax) values))))
+    (wrap (fun ;(map |(parser/pattern-to-object $ dpt) values))))
 
   (defn wrap-tuple [fun values]
     (def result (wrap-map fun values))
@@ -237,8 +262,8 @@
 
   (defn wrap-stx-ptuple []
     (def values ((pat :value) :value))
-    (def result [(parser/pattern-to-object (first values) syntax)
-                       ;(map |(parser/pattern-to-object $ true) (array/slice values 1))])
+    (def result [(parser/pattern-to-object (first values) dpt)
+                       ;(map |(parser/pattern-to-object $ (if dpt (inc dpt) 0)) (array/slice values 1))])
     (tuple/setmap result ((pat :source) :line) ((pat :source) :column))
     (wrap result))
 
@@ -264,7 +289,7 @@
     :quasiquote (wrap-reader 'quasiquote (pat :value))
     :unquote (wrap-reader 'unquote (pat :value))
     :short-fn (wrap-reader 'short-fn (pat :value))
-    :stx/quote (parser/pattern-to-object (pat :value) true)
+    :stx/quote (parser/pattern-to-object (pat :value) (if dpt (inc dpt) 0))
     :stx-ptuple (wrap-stx-ptuple)
     :stx-long-string (wrap-stringlike ((pat :value) :value) (inc (length ((pat :value) :delim))))
      # else
