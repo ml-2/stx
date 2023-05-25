@@ -1,6 +1,6 @@
 (declare-project
  :name "stx"
- :description "Abstractions for Janet"
+ :description "Syntactic macros syntax extension"
  :dev-dependencies [
     {:url "https://github.com/ianthehenry/judge.git"
      :tag "v2.5.0"}])
