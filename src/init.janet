@@ -423,6 +423,8 @@
                       nil))}
          (or ,opts {})))))
 
+(def stx-env (curenv))
+
 (defn init
   `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
   []
@@ -433,7 +435,7 @@
             (parser/run
              {:source path
               :parser (parser/new)
-              :env (table/setproto @{} root-env)
+              :env (table/setproto (merge-module @{} stx-env "stx/") root-env)
               :chunks (fn [buf p] (file/read file :all buf))})))
     (put module/loaders key loader)
     (array/push module/paths [":all:.stx.janet" key])))
