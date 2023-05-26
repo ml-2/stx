@@ -28,6 +28,30 @@ symbol-doesnt-exist
    :name "test/run.janet"
    :value []})
 
+(test-error (stx/sourcemap/run '(```
+({[
+```)) "Unterminated btuple value in file \"test/run.janet\" at line 32 column 3")
+
+(test-error (stx/sourcemap/run '(```
+({[5x
+```)) "Invalid number 5x in file \"test/run.janet\" at line 36 column 4")
+
+(test-error (stx/sourcemap/run '(```
+({[hello
+```)) "Unterminated btuple value in file \"test/run.janet\" at line 40 column 3")
+
+(test-error (stx/sourcemap/run '(```
+\'(1 2 3
+```)) "Unterminated ptuple value in file \"test/run.janet\" at line 44 column 3")
+
+(test-error (stx/sourcemap/run '(```
+\([1 2 3
+```)) "Unterminated btuple value in file \"test/run.janet\" at line 48 column 3")
+
+(test-error (stx/sourcemap/run '(```
+\(
+```)) "Unterminated ptuple value in file \"test/run.janet\" at line 52 column 2")
+
 # NOTE END
 
 (test-error (stx/sourcemap/run '(```
@@ -54,5 +78,5 @@ symbol-doesnt-exist
 
 (test (= stx/new imp/my-stx-new) true)
 
-(test-error (import ./imp-err0) "Incomplete stx/quote value in \"test/imp-err0.janet.stx\" at line 2 column 1")
+(test-error (import ./imp-err) "Unterminated stx/quote value in file \"test/imp-err.janet.stx\" at line 2 column 1")
 

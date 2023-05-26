@@ -74,20 +74,21 @@
       (fn [s d x p e] {:type typ :delim d :value x :source s :partial? p :end e}))
 
     (defn sym [s x p e]
-
       (def invalid-symbol?
         (and (first x) (>= (first x) (chr "0")) (<= (first x) (chr "9"))))
-
       (when (and (not p) invalid-symbol?)
         (errorf `Invalid number in "%s" at line %d column %d` (s :name) (s :line) (s :column)))
-
       (def type (match x
                   "true" :true "false" :false "nil" :nil
                    :symbol))
-
       {:type type :value x :source s
        :partial? (if invalid-symbol? :number-error p)
        :end e})
+
+    (defn structlike [typ]
+      (fn [s x o p e]
+        (when o (array/push x o))
+        {:type typ :value x :source s :partial? p :end e}))
 
     (defn backslash [s x e]
       (def type (match (x :type)
@@ -102,13 +103,15 @@
                 :partial? (val :partial?) :end e}))
       (def sym (match x
                  "'" "quote"
-                  ";" "splice"
-                  "~" "quasiquote"
-                  "," "unquote"
-                  "|" "short-fn"
-                  # else
-                  (errorf "Internal stx error: Unknown reader macro %v" readermac)))
-      {:type :ptuple :value @[((simple :symbol) s sym (val :partial?) e) val]
+                 ";" "splice"
+                 "~" "quasiquote"
+                 "," "unquote"
+                 "|" "short-fn"
+                 # else
+                 (errorf "Internal stx error: Unknown reader macro %v" readermac)))
+      {:type (keyword sym)
+       :value {:type :ptuple :value @[((simple :symbol) s sym (val :partial?) e) val]
+               :source s :partial? (val :partial?) :end e}
        :source s :partial? (val :partial?) :end e})
 
     # :partial? can be true, :maybe, :number-error, or nil.
@@ -213,16 +216,16 @@
                         (position))
        :btuple (cmt (* :source :btuple-inner) ,(simple :btuple))
        :struct-inner (* "{" (group :root2)
-                        (+ (* "}" (constant nil))
-                           (* :space (+ (* (drop :value) -1) -1) (constant true))
+                        (+ (* (constant nil) "}" (constant nil))
+                           (* :space (+ (* :value -1) (* (constant nil) -1)) (constant true))
                            (* :space (drop :value) "}"
                               (error (* (constant "Odd number of values in struct or table" :message) :delim-err)))
                            (error (* (constant "Unmatched curly bracket" :message) :delim-err)))
                         (position))
-       :struct (cmt (* :source :struct-inner) ,(simple :struct))
+       :struct (cmt (* :source :struct-inner) ,(structlike :struct))
        :parray (cmt (* :source "@" :ptuple-inner) ,(simple :parray))
        :barray (cmt (* :source "@" :btuple-inner) ,(simple :barray))
-       :table (cmt (* :source "@" :struct-inner) ,(simple :table))
+       :table (cmt (* :source "@" :struct-inner) ,(structlike :table))
        :readermac (cmt (* :source '(+ (set `';~,|`) `\'`)
                           :space
                           (+ :raw-value
@@ -300,6 +303,11 @@
     :parray (wrap-map array (pat :value))
     :barray (wrap-map array (pat :value))
     :table (wrap-map table (pat :value))
+    :quote (parser/pattern-to-object (pat :value) dpt)
+    :splice (parser/pattern-to-object (pat :value) dpt)
+    :quasiquote (parser/pattern-to-object (pat :value) dpt)
+    :unquote (parser/pattern-to-object (pat :value) dpt)
+    :short-fn (parser/pattern-to-object (pat :value) dpt)
     :stx/quote (parser/pattern-to-object (pat :value) (if dpt (inc dpt) 0))
     :stx-ptuple (wrap-stx-ptuple)
     :stx-long-string (wrap-stringlike ((pat :value) :value) (inc (length ((pat :value) :delim))))
@@ -394,15 +402,67 @@
            lc-pattern
            (parser :buffer) (parser :position) (parser :start-line) (parser :start-column))))
 
+
+(defn- parser/partial-error [pat]
+  (defn internal-error []
+    (string/format "Internal stx error: Impossible type and partial combination [%v %v]"
+                   (pat :type) (pat :partial?)))
+  (defn message [msg src & args]
+    (string/format (string msg " in file \"%s\" at line %d column %d")
+                   ;args
+                   (src :name) (src :line) (src :column)))
+  (defn on-container []
+    (def inner-val (last (pat :value)))
+    (if (and inner-val (inner-val :type) (get {true true :number-error true} (inner-val :partial?)))
+      (parser/partial-error inner-val)
+      (message "Unterminated %s value" (pat :source) (pat :type))))
+  (defn on-readermac []
+    (def inner-val (((pat :value) :value) 1))
+    (if (inner-val :type)
+      (parser/partial-error inner-val)
+      (message "%s without a value" (pat :source) (pat :type))))
+  (defn on-stx-quote []
+    (def inner-val (pat :value))
+    (if (and inner-val (inner-val :type))
+      (parser/partial-error inner-val)
+      (message "Unterminated %s value" (pat :source) (pat :type))))
+  (match (pat :type)
+    :symbol (do
+              # Can only error if this is :number-error
+              (assert (= (pat :partial?) :number-error) (internal-error))
+              (message "Invalid number %s" (pat :source) (pat :value)))
+    # :true # Impossible state
+    # :false # Impossible state
+    # :nil # Impossible state
+    # :keyword # Impossible state
+    :string (message "Unterminated string literal" (pat :source))
+    :buffer (message "Unterminated buffer literal" (pat :source))
+    :long-string (message "Unterminated long string literal" (pat :source))
+    :long-buffer (message "Unterminated long buffer literal" (pat :source))
+    # :number # Impossible state
+    :ptuple (on-container)
+    :btuple (on-container)
+    :struct (on-container)
+    :parray (on-container)
+    :barray (on-container)
+    :table (on-container)
+    :quote (on-readermac)
+    :splice (on-readermac)
+    :quasiquote (on-readermac)
+    :unquote (on-readermac)
+    :short-fn (on-readermac)
+    :stx/quote (on-stx-quote)
+    :stx-ptuple (parser/partial-error (pat :value))
+    :stx-long-string (message "Unterminated long string literal" (pat :source))
+    # else
+    (error (internal-error))))
+
 (defn parser/error [parser]
   (when (= (parser/state-key parser) :error)
     (def err ((parser :state) 1))
     (match (err :type)
       :peg (err :error)
-      :partial (do (def src ((err :value) :source))
-                   (string/format "Incomplete %s value in \"%s\" at line %d column %d"
-                                  ((err :value) :type)
-                                  (src :name) (src :line) (src :column)))
+      :partial (parser/partial-error (err :value))
       :number
        (do (def src ((err :value) :source))
            (string/format "Invalid number %s in \"%s\" at line %d column %d"
