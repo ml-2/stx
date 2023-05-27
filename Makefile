@@ -1,17 +1,21 @@
+STX_BUILD=jpm_tree/lib/stx/init.janet
+STX_TEST_DEP=jpm_tree/bin/judge
+STX_TEST_CMD=jpm_tree/bin/judge
+
 all: build test
 
-jpm_tree/bin/judge:
+$(STX_TEST_DEP):
 	jpm install --local git::https://github.com/ianthehenry/judge.git::v2.5.0
 
-jpm_tree/lib/stx/init.janet: project.janet src/init.janet src/stx.c
+$(STX_BUILD): project.janet src/init.janet src/stx.c
 	jpm install --local
 
-build: jpm_tree/lib/stx/init.janet
+build: $(STX_BUILD)
 
 clean:
 	rm -rf jpm_tree/
 
-test: jpm_tree/lib/stx/init.janet jpm_tree/bin/judge
-	jpm -l exec jpm_tree/bin/judge test/
+test: build $(STX_TEST_DEP)
+	jpm -l exec $(STX_TEST_CMD) test/
 
 .PHONY: all build clean test

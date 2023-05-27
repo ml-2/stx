@@ -12,5 +12,3 @@
 (declare-source
  :source ["src/init.janet"]
  :prefix "stx")
-
-(task "test" [] (shell "jpm -l exec jpm_tree/bin/judge test/"))
