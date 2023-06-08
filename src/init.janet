@@ -1,3 +1,5 @@
+# TODO: Add support for \name() syntax for reader macros. \() is for lisp-like delimed syntax, \[] is for syntax which is not lisp-like. It follows a permissive delim system. This is important for metamath, because \``` ``` or '(```\n``` is not ergonomic.
+
 (import "stx/native" :prefix "" :export true)
 
 (defn stx? [x] (= (type x) :stx))
@@ -532,7 +534,7 @@
             :chunks (fn [buf p] (file/read file :all buf))}))))
 
 (defn init
-  `Initialize the stx syntax loader, allowing ".stx.janet" files to be imported.`
+  `Initialize the stx syntax loader, allowing ".janet.stx" files to be imported.`
   []
   (def key :stx-syntax)
   (unless (get module/loaders key)
